@@ -17,10 +17,10 @@ ABI="${ABI:-arm64-v8a}"
 API="${API:-29}"
 
 case "$ABI" in
-  arm64-v8a)   TRIPLE=aarch64-linux-android ;;
-  armeabi-v7a) TRIPLE=armv7-linux-androideabi ;;
-  x86_64)      TRIPLE=x86_64-linux-android ;;
-  x86)         TRIPLE=i686-linux-android ;;
+  arm64-v8a)   TRIPLE=aarch64-linux-android;      CLANG_TRIPLE=aarch64-linux-android ;;
+  armeabi-v7a) TRIPLE=armv7-linux-androideabi;    CLANG_TRIPLE=armv7a-linux-androideabi ;;
+  x86_64)      TRIPLE=x86_64-linux-android;       CLANG_TRIPLE=x86_64-linux-android ;;
+  x86)         TRIPLE=i686-linux-android;         CLANG_TRIPLE=i686-linux-android ;;
   *) echo "unknown ABI: $ABI" >&2; exit 1 ;;
 esac
 ENVPREFIX="$(echo "$TRIPLE" | tr '[:lower:]-' '[:upper:]_')"
@@ -75,13 +75,19 @@ cd "$HERE"
 # see those args either way — detect which cargo-ndk is installed and pass the flag only when it exists.
 BINDGEN=()
 if cargo ndk --help 2>/dev/null | grep -q -- '--bindgen'; then BINDGEN=(--bindgen); fi
+# NDK r28+ headers reject the unversioned triple bindgen derives from TARGET, and
+# cargo-ndk only supplies the sysroot. bindgen reads the hyphenated per-target
+# variable before cargo-ndk's underscored one, so it gets the API-versioned triple.
+SYSROOT="$(ls -d "$NDK_HOME"/toolchains/llvm/prebuilt/*/sysroot 2>/dev/null | head -1)"
+[ -d "$SYSROOT" ] || { echo "NDK sysroot not found under $NDK_HOME" >&2; exit 1; }
 
 # `build.sh clippy` type-checks the crate with clippy instead of building the .a,
 # enforcing its cast lints (capi's conversion functions deny them). It runs under
 # the same NDK/BoringSSL env as a build, so it checks the exact target the
 # interceptor ships for. Any other/absent argument builds the static library.
 CARGO_CMD="${1:-build}"
-cargo ndk -t "$ABI" --platform "$API" "${BINDGEN[@]}" "$CARGO_CMD" --release -p teesim-km
+env "BINDGEN_EXTRA_CLANG_ARGS_${TRIPLE}=--target=${CLANG_TRIPLE}${API} --sysroot=${SYSROOT}" \
+  cargo ndk -t "$ABI" --platform "$API" ${BINDGEN[@]+"${BINDGEN[@]}"} "$CARGO_CMD" --release -p teesim-km
 
 if [ "$CARGO_CMD" = build ]; then
   echo "Output: $HERE/target/$TRIPLE/release/libteesim_km.a"

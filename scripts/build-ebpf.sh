@@ -43,6 +43,11 @@ if [[ "$ACTION" == stage ]]; then
   host_root test ! -e "$STAGE" || { echo '{"ok":false,"error":"shared_protection_staging_conflict"}'; exit 1; }
   host_root install -d -o root -g root -m 0700 "$STAGE"
   for name in Makefile loader.c xenoid_pathhide.bpf.c; do host_root sh -c "umask 077; cat > '$STAGE/$name'" < "$SRC/$name"; host_root chmod 0600 "$STAGE/$name"; done
+  # Minimal engine images (colima) ship without the BPF toolchain; provision it on
+  # apt-managed engine hosts like build-kmod.sh does. Local hosts manage their own.
+  if [[ "$MODE" != local ]] && ! host_root sh -c 'command -v make && command -v clang && command -v llvm-strip && bpftool version && test -f /usr/include/bpf/libbpf.h && test -f /usr/include/gelf.h' >/dev/null 2>&1; then
+    host_root sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends make clang llvm libc6-dev libbpf-dev libelf-dev zlib1g-dev linux-tools-common "linux-tools-$(uname -r)"' >&2 || { echo '{"ok":false,"error":"shared_protection_ebpf_build_failed"}'; exit 1; }
+  fi
   host_root sh -c "cd '$STAGE' && make clean >/dev/null 2>&1 || true; SOURCE_DATE_EPOCH=0 make" >&2 || { echo '{"ok":false,"error":"shared_protection_ebpf_build_failed"}'; exit 1; }
   host_root test -f "$STAGED" && host_root test ! -L "$STAGED" || { echo '{"ok":false,"error":"shared_protection_ebpf_build_failed"}'; exit 1; }
   host_root chown root:root "$STAGED"; host_root chmod 0700 "$STAGED"

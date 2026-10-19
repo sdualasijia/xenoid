@@ -344,7 +344,7 @@ def prerequisites():
  if "TPROXY" not in targets6 or "REDIRECT" not in targets6 or "socket" not in matches6:raise Error("ipv6_unsupported")
 def install_deps():
  if tool_opt("apk"):run([tool("apk"),"add","--no-cache","python3","py3-cryptography","py3-yaml","iproute2","iptables","util-linux","libcap","ca-certificates","curl","conntrack-tools","shadow","procps"],code="dependency_install_failed")
- elif tool_opt("apt-get"):run([tool("apt-get"),"update"],code="dependency_install_failed");run([tool("apt-get"),"install","-y","--no-install-recommends","python3","python3-cryptography","python3-yaml","iproute2","iptables","util-linux","libcap2-bin","ca-certificates","curl","conntrack","procps"],code="dependency_install_failed")
+ elif tool_opt("apt-get"):run([tool("apt-get"),"-o","Acquire::Retries=5","update"],code="dependency_install_failed");run([tool("apt-get"),"-o","Acquire::Retries=5","install","-y","--no-install-recommends","python3","python3-cryptography","python3-yaml","iproute2","iptables","util-linux","libcap2-bin","ca-certificates","curl","conntrack","procps"],code="dependency_install_failed")
  elif tool_opt("dnf"):run([tool("dnf"),"install","-y","python3","python3-cryptography","python3-pyyaml","iproute","iptables","util-linux","libcap","ca-certificates","curl","conntrack-tools","shadow-utils","procps-ng"],code="dependency_install_failed")
  else:raise Error("package_manager_unsupported")
 def install_prerequisites():

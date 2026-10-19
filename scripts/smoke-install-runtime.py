@@ -92,11 +92,12 @@ def main() -> int:
         dry_run_script_result = {}
     planned_commands = dry_run_script_result.get("commands", [])
     jdk_plan_ok = (
-        planned_commands[:3]
+        planned_commands[:4]
         == [
-            "brew install docker colima android-platform-tools scrcpy openjdk@17",
+            "brew install --formula docker docker-buildx docker-credential-helper colima scrcpy openjdk@17",
+            "register Homebrew Docker CLI plugins in ${DOCKER_CONFIG:-~/.docker}/config.json",
             "brew link --force openjdk@17",
-            "brew install --cask android-commandlinetools",
+            "brew install --cask android-platform-tools android-commandlinetools",
         ]
         and all("temurin" not in command for command in planned_commands)
         and "docker pull --platform linux/arm64 redroid/redroid@sha256:5a42a569ee1d7c71796c0385e906cbaa4c3e0a162a56d9f26b29bdb1befac13b (content-addressed mirror fallback)"

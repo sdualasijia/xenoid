@@ -292,6 +292,13 @@ def run_script(args: argparse.Namespace, name: str) -> dict[str, Any]:
     }
 
 
+def _write_install_progress(stream: str, detail: str) -> None:
+    if stream == "heartbeat":
+        return
+    sys.stderr.write(detail)
+    sys.stderr.flush()
+
+
 def cmd_install_runtime(args: argparse.Namespace) -> int:
     script = args.project_root / "scripts" / "install-macos-runtime.sh"
     cmd = [str(script)] + (["--dry-run"] if args.dry_run else [])
@@ -301,6 +308,7 @@ def cmd_install_runtime(args: argparse.Namespace) -> int:
         env=command_env(args),
         deadline=time.monotonic() + 3600.0,
         project_root=args.project_root,
+        progress=_write_install_progress if sys.stderr.isatty() and not args.dry_run else None,
     )
     result = {"ok": proc.ok, "state": proc.state, "errorCode": proc.error_code, "returncode": proc.returncode, "stdout": proc.stdout_tail, "stderr": proc.stderr_tail, "script": script.name}
     print_json(result)
@@ -893,7 +901,22 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 
 def cmd_view(args: argparse.Namespace) -> int:
-    result = runtime(args).view()
+    def stage(phase: str, state: str, detail: str) -> None:
+        _write_up_progress(
+            {
+                "schema": "dev.xenoid.progress/v1",
+                "command": "view",
+                "phase": phase,
+                "state": state,
+                "durationMs": 0,
+                "detail": detail,
+            }
+        )
+
+    result = runtime(args).view(
+        progress=stage,
+        stream=sys.stderr if sys.stderr.isatty() else None,
+    )
     print_json(result)
     return 0 if result.get("ok") else 1
 

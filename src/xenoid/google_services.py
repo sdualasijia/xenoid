@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional
 
 from .config import InstanceContext, InstanceError, InstanceLease, XenoidConfig
-from .util import which
+from .util import android_sdk_dir, which
 from .process import run_bounded
 
 GOOGLE_RELEASE_SCHEMA_V1 = "dev.xenoid.google-release/v1"
@@ -1122,13 +1122,24 @@ def _run_checked(command: list[str], code: str, message: str, timeout: int = 300
     )
 
 
+_ANDROID_BUILD_TOOLS_VERSION = "35.0.0"
+
+
 def _tool_paths() -> dict[str, str]:
     result: dict[str, str] = {}
-    for name in ("keytool", "jarsigner", "aapt2", "apksigner"):
+    for name in ("keytool", "jarsigner"):
         path = which(name)
         if path is None:
             raise GoogleServicesError("google_services_tools_missing", "install the Android signing and Java verification tools")
         result[name] = path
+    # Signer-lineage and badging output differ across build-tools releases, so
+    # verification uses the pinned release instead of whichever one is on PATH.
+    sdk = android_sdk_dir()
+    for name in ("aapt2", "apksigner"):
+        candidate = None if sdk is None else sdk / "build-tools" / _ANDROID_BUILD_TOOLS_VERSION / name
+        if candidate is None or not os.access(candidate, os.X_OK):
+            raise GoogleServicesError("google_services_tools_missing", f"install Android build-tools {_ANDROID_BUILD_TOOLS_VERSION}")
+        result[name] = str(candidate)
     return result
 
 
@@ -1183,6 +1194,10 @@ def _verify_outer_signature(zip_path: Path, pem_path: Path, spec: ReleaseSpec, t
         verified = _run_checked(
             [
                 tools["jarsigner"],
+                # The verdict below is matched as text; pin the JVM locale so
+                # localized hosts do not translate "jar verified".
+                "-J-Duser.language=en",
+                "-J-Duser.country=US",
                 "-verify",
                 "-strict",
                 "-keystore",

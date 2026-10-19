@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import tempfile
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator, Mapping, Optional
+from typing import Any, BinaryIO, Callable, Iterator, Mapping, Optional, TextIO
 
 from .artifacts import (
     CONSUMER_TARGETS,
@@ -31,6 +31,7 @@ from .artifacts import (
     ArtifactOutput,
     ArtifactRecord,
     ArtifactSnapshot,
+    requested_environment,
 )
 from .config import (
     InstanceContext,
@@ -454,8 +455,8 @@ class RuntimeManager:
         info = host_info()
         checks = [
             Check("host", True, f"{info['system']} {info['machine']} / Python {info['python']}"),
-            Check("docker", which("docker") is not None, which("docker") or "not found", "brew install docker" if info["system"] == "Darwin" else "install docker/podman compatible Docker CLI"),
-            Check("adb", which("adb") is not None, which("adb") or "not found", "brew install android-platform-tools" if info["system"] == "Darwin" else "install android-tools-adb"),
+            Check("docker", which("docker") is not None, which("docker") or "not found", "brew install --formula docker" if info["system"] == "Darwin" else "install docker/podman compatible Docker CLI"),
+            Check("adb", which("adb") is not None, which("adb") or "not found", "brew install --cask android-platform-tools" if info["system"] == "Darwin" else "install android-tools-adb"),
             Check("scrcpy", which("scrcpy") is not None, which("scrcpy") or "not found", "brew install scrcpy" if info["system"] == "Darwin" else "install scrcpy"),
         ]
         if info["system"] == "Darwin":
@@ -6706,7 +6707,7 @@ cat >/dev/null
         builder = object.__new__(ArtifactBuilder)
         builder.project_root = self.context.project_root.resolve()
         builder.catalog = TARGETS
-        builder._requested_environment = dict(os.environ)
+        builder._requested_environment = requested_environment()
         builder._deadline = time.monotonic() + 60.0
         builder._cancelled = None
         builder._internal_cancel = threading.Event()
@@ -11695,17 +11696,75 @@ cat >/dev/null
             result["adb"] = "not found"
         return result
 
-    def view(self) -> dict[str, Any]:
+    def view(
+        self,
+        *,
+        progress: Optional[Callable[[str, str, str], None]] = None,
+        stream: Optional[TextIO] = None,
+    ) -> dict[str, Any]:
+        """Open scrcpy; ``progress(phase, state, detail)`` reports stages and an
+        interactive ``stream`` receives scrcpy's own log while the window is open."""
+
+        def step(phase: str, state: str, detail: str) -> None:
+            if progress is not None:
+                progress(phase, state, detail)
+
+        step("scrcpy", "started", "resolving")
         scrcpy = which("scrcpy")
         if scrcpy is None:
+            step("scrcpy", "failed", "scrcpy_not_found")
             return {"ok": False, "error": "scrcpy not found", "fix": "brew install scrcpy"}
+        step("scrcpy", "passed", scrcpy)
+        step("container", "started", "verifying_ownership")
         owned, error = self._owned_container()
         if not owned:
+            step("container", "failed", "resource_conflict")
             return {"ok": False, "error": "resource_conflict", "message": error}
+        step("container", "passed", "owned")
+        step("adb", "started", self.adb_target)
+        self.adb_connect()
+        connected = self.adb(["get-state"])
+        if connected.get("ok") is not True or "device" not in str(connected.get("stdout", "")):
+            step("adb", "failed", "adb_not_connected")
+            return {"ok": False, "error": "adb_not_connected", "adbTarget": self.adb_target, "adb": connected}
+        step("adb", "passed", "connected")
         # redroid images commonly lack an Opus encoder; scrcpy 4.x enables audio by default.
         # Disable audio for the default Xenoid view path to avoid server startup failure.
-        proc = run([scrcpy, "-s", self.adb_target, "--no-audio", "--video-codec=h264", "--max-size=1024"], capture=True)
-        return {"ok": proc.returncode == 0, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+        command = [scrcpy, "-s", self.adb_target, "--no-audio", "--video-codec=h264", "--max-size=1024"]
+        step("window", "started", "scrcpy_running_close_window_to_exit")
+        if stream is not None:
+            # scrcpy fully buffers its client log on a pipe and flushes it only at
+            # exit, so an interactive caller hands over its terminal instead.
+            try:
+                completed = subprocess.run(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=stream,
+                    stderr=stream,
+                    timeout=bounded_timeout(None),
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                step("window", "failed", "process_timeout")
+                return {"ok": False, "error": "process_timeout"}
+            step("window", "passed" if completed.returncode == 0 else "failed", f"returncode_{completed.returncode}")
+            return {"ok": completed.returncode == 0, "returncode": completed.returncode, "output": "streamed"}
+        effective = bounded_timeout(None)
+        proc = run_bounded(
+            command,
+            cwd=self.context.project_root,
+            deadline=time.monotonic() + (effective if effective is not None else 3600.0),
+            project_root=self.context.project_root,
+        )
+        step("window", "passed" if proc.ok else "failed", proc.error_code or f"returncode_{proc.returncode}")
+        return {
+            "ok": proc.ok,
+            "state": proc.state,
+            "errorCode": proc.error_code,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout_tail,
+            "stderr": proc.stderr_tail,
+        }
 
     @staticmethod
     def _proxy_failure(code: str) -> dict[str, Any]:
@@ -12632,10 +12691,15 @@ cat >/dev/null
         )
         if manifest["manifestDigest"] != owner["manifestDigest"]:
             raise InstanceError("ownership_mismatch", "proxy ownership runtime identity is stale")
-        self._proxy_stage_manifest(manifest)
+        self._proxy_stage_manifest(manifest, allow_stopped=allow_stopped)
         return manifest
 
-    def _proxy_stage_manifest(self, manifest: dict[str, Any]) -> None:
+    def _proxy_stage_manifest(
+        self,
+        manifest: dict[str, Any],
+        *,
+        allow_stopped: bool = False,
+    ) -> None:
         self._proxy_install_directory("/run/xenoid", 0o755)
         self._proxy_install_directory("/run/xenoid/proxy", 0o755)
         self._proxy_install_directory(self._proxy_runtime_path, 0o711)
@@ -12655,7 +12719,14 @@ cat >/dev/null
             )
         ):
             raise InstanceError("manifest_invalid", "proxy manifest staging failed")
-        if self._proxy_read_manifest(require_live=True, allow_absent=False) != manifest:
+        if (
+            self._proxy_read_manifest(
+                require_live=True,
+                allow_absent=False,
+                allow_stopped=allow_stopped,
+            )
+            != manifest
+        ):
             raise InstanceError("manifest_invalid", "staged proxy manifest verification failed")
 
     def _proxy_feature_absent(self) -> bool:
@@ -12819,7 +12890,7 @@ cat >/dev/null
                     container_id,
                     network_id,
                 )
-                self._proxy_stage_manifest(existing)
+                self._proxy_stage_manifest(existing, allow_stopped=allow_stopped)
         if (
             isinstance(existing, Mapping)
             and existing.get("containerId") == "0" * 64
@@ -12831,7 +12902,7 @@ cat >/dev/null
                 container_id,
                 network_id,
             )
-            self._proxy_stage_manifest(existing)
+            self._proxy_stage_manifest(existing, allow_stopped=allow_stopped)
         expected_digest = self._proxy_local_control_digest()
         checked = self._proxy_root_json("check-control")
         if checked.get("ok") is True and checked.get("controlDigest") == expected_digest:

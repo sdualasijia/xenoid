@@ -11,5 +11,5 @@ for ndk in "$SDK"/ndk/*; do for pre in darwin-x86_64 darwin-arm64 linux-x86_64; 
 [[ -n "$BIN" ]] || { echo "$TOOL not found" >&2; exit 127; }
 EXTRA=()
 [[ "$LINK" == "static" ]] && EXTRA+=(-static)
-"$BIN" -O2 -s -Wall -Wextra -fstack-protector-strong -D_FORTIFY_SOURCE=2 "${EXTRA[@]}" -o "$OUT" "$SRC"
+"$BIN" -O2 -s -Wall -Wextra -fstack-protector-strong -D_FORTIFY_SOURCE=2 ${EXTRA[@]+"${EXTRA[@]}"} -o "$OUT" "$SRC"
 echo "$OUT"

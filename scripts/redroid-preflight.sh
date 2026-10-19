@@ -21,7 +21,7 @@ if [[ -n "$DOCKER_BIN" ]]; then
   if DOCKER_INFO="$("$DOCKER_BIN" info 2>&1)"; then add_check docker true "$(printf '%s\n' "$DOCKER_INFO" | sed -n '1,5p' | tr '\n' ' ')" ""
   else add_check docker false "$DOCKER_INFO" "start Docker/Colima daemon"
   fi
-else add_check docker false "not found" "macOS: brew install docker colima; Linux: install docker"
+else add_check docker false "not found" "macOS: brew install --formula docker colima; Linux: install docker"
 fi
 if [[ "$OS" == Darwin ]]; then
   COLIMA_BIN="$(find_cmd colima)"

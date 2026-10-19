@@ -148,9 +148,9 @@ export CARGO_BUILD_JOBS="$JOBS"
 # --build: compile from the in-tree sources.
 [[ -f "$ARTIFACT_DIR/CMakeLists.txt" && -f "$ARTIFACT_DIR/src/keymint_service.cpp" ]] \
   || fail "source_invalid"
-if [[ ! -d "$ARTIFACT_DIR/.deps/keymint" ]]; then
-  bash "$ROOT/scripts/fetch-keymint-deps.sh" >/dev/null || fail "deps_missing"
-fi
+# The fetcher is idempotent and offline for pinned checkouts, so an interrupted
+# earlier fetch is resumed instead of leaving a partial tree in place.
+bash "$ROOT/scripts/fetch-keymint-deps.sh" >/dev/null || fail "deps_missing"
 
 PATH="$HOME/.cargo/bin:$PATH"
 export PATH RUSTUP_TOOLCHAIN=stable
@@ -202,14 +202,12 @@ shopt -u nullglob
 
 CMAKE=""
 NINJA=""
-shopt -s nullglob
-for candidate in "$SDK"/cmake/*/bin/cmake; do
-  [[ -x "$candidate" ]] && CMAKE="$candidate"
-done
-for candidate in "$SDK"/cmake/*/bin/ninja; do
-  [[ -x "$candidate" ]] && NINJA="$candidate"
-done
-shopt -u nullglob
+# Pick the newest SDK CMake by numeric version; glob order would select 3.6
+# over 3.22, and releases before 3.13 lack -S/-B.
+while IFS= read -r version; do
+  [[ -x "$SDK/cmake/$version/bin/cmake" ]] && CMAKE="$SDK/cmake/$version/bin/cmake"
+  [[ -x "$SDK/cmake/$version/bin/ninja" ]] && NINJA="$SDK/cmake/$version/bin/ninja"
+done < <(ls "$SDK/cmake" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n)
 if [[ -z "$CMAKE" ]]; then CMAKE="$(command -v cmake || true)"; fi
 if [[ -z "$NINJA" ]]; then NINJA="$(command -v ninja || true)"; fi
 [[ -n "$CMAKE" && -x "$CMAKE" ]] || fail "cmake_missing"

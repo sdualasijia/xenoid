@@ -5,7 +5,8 @@ if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew is required: https://brew.sh" >&2
   exit 1
 fi
-brew install colima docker android-platform-tools scrcpy || true
+brew install --formula colima docker scrcpy || true
+brew install --cask android-platform-tools || true
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -U pip setuptools wheel

@@ -35,9 +35,10 @@ sdkmanager_path() {
 }
 
 cmds=(
-  "brew install docker colima android-platform-tools scrcpy openjdk@17"
+  "brew install --formula docker docker-buildx docker-credential-helper colima scrcpy openjdk@17"
+  "register Homebrew Docker CLI plugins in \${DOCKER_CONFIG:-~/.docker}/config.json"
   "brew link --force openjdk@17"
-  "brew install --cask android-commandlinetools"
+  "brew install --cask android-platform-tools android-commandlinetools"
   "sdkmanager --sdk_root=$SDK_ROOT --licenses"
   "sdkmanager --sdk_root=$SDK_ROOT platform-tools platforms;android-35 build-tools;35.0.0 ndk;$NDK_VERSION"
   "colima start --arch aarch64 --vm-type vz --memory 8 --cpu 8"
@@ -72,7 +73,7 @@ MSG
   exit 127
 fi
 
-if brew install docker colima android-platform-tools scrcpy openjdk@17; then
+if brew install --formula docker docker-buildx docker-credential-helper colima scrcpy openjdk@17; then
   :
 else
   brew_status=$?
@@ -90,6 +91,27 @@ MSG
   fi
   exit "$brew_status"
 fi
+# Homebrew keeps CLI plugins outside the Docker CLI search path; a removed Docker
+# Desktop otherwise leaves dangling ~/.docker/cli-plugins links behind buildx.
+DOCKER_CONFIG_FILE="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+mkdir -p "$(dirname "$DOCKER_CONFIG_FILE")"
+python3 - "$DOCKER_CONFIG_FILE" "$(brew --prefix)/lib/docker/cli-plugins" <<'PY'
+import json, os, sys
+path, plugins = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        config = json.load(handle)
+except FileNotFoundError:
+    config = {}
+dirs = config.setdefault("cliPluginsExtraDirs", [])
+if plugins not in dirs:
+    dirs.append(plugins)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+        handle.write("\n")
+    os.replace(tmp, path)
+PY
 JDK_PREFIX="$(brew --prefix openjdk@17)"
 JAVA_HOME="$JDK_PREFIX/libexec/openjdk.jdk/Contents/Home"
 [[ -x "$JAVA_HOME/bin/java" ]] || {
@@ -99,7 +121,7 @@ JAVA_HOME="$JDK_PREFIX/libexec/openjdk.jdk/Contents/Home"
 export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$PATH"
 brew link --force openjdk@17
-brew install --cask android-commandlinetools
+brew install --cask android-platform-tools android-commandlinetools
 SDKMANAGER="$(sdkmanager_path)" || {
   echo "sdkmanager was not installed by the android-commandlinetools cask" >&2
   exit 127
@@ -155,6 +177,10 @@ NDK_CLANG="$(find "$SDK_ROOT/ndk/$NDK_VERSION/toolchains/llvm/prebuilt" -type f 
   exit 127
 }
 docker info >/dev/null
+docker buildx version >/dev/null || {
+  echo "docker buildx is unavailable; check cliPluginsExtraDirs in $DOCKER_CONFIG_FILE" >&2
+  exit 127
+}
 docker image inspect "$BASE_IMAGE" >/dev/null
 colima ssh -- test -e /dev/binderfs/binder-control
 

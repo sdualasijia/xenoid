@@ -36,8 +36,10 @@ elif [[ "$(uname -s)" == Linux && "$(uname -m)" =~ ^(aarch64|arm64)$ ]]; then
   build_with "${CC:-cc}"
 elif command -v zig >/dev/null 2>&1; then
   build_with zig cc -target aarch64-linux-gnu
-elif command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
-  # Colima exposes the repository at the same absolute path and is native ARM64.
+elif command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1 \
+  && colima ssh -- sh -c 'command -v cc' >/dev/null 2>&1; then
+  # Colima exposes the repository at the same absolute path and is native ARM64;
+  # its minimal VM image ships no compiler, so Docker covers that case.
   colima ssh -- cc "${FLAGS[@]}" "$SRC" -o "$TMP"
 elif command -v docker >/dev/null 2>&1; then
   rm -f "$TMP"

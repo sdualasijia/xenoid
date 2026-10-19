@@ -37,9 +37,11 @@ if [[ "$ACTION" == stage ]]; then
   # A VM kernel upgrade leaves /lib/modules/$(uname -r)/build missing until the
   # matching headers package is installed; install it on apt-managed engine
   # hosts (colima VM, ssh targets) the same way ensure_binder installs
-  # linux-modules-extra. Local Linux hosts keep managing their own headers.
-  if [[ "$MODE" != local ]] && ! host_root test -d "/lib/modules/$(host uname -r)/build"; then
-    host_root sh -c 'apt-get update -qq && apt-get install -y -qq "linux-headers-$(uname -r)"' >&2 || { echo '{"ok":false,"error":"shared_protection_kmod_headers_unavailable"}'; exit 1; }
+  # linux-modules-extra. Minimal engine images (colima) also ship without make,
+  # gcc, or binutils, so the module toolchain is provisioned with the headers.
+  # Local Linux hosts keep managing their own headers and toolchain.
+  if [[ "$MODE" != local ]] && ! host_root sh -c 'test -d "/lib/modules/$(uname -r)/build" && command -v make && command -v gcc && command -v readelf' >/dev/null; then
+    host_root sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "linux-headers-$(uname -r)" make gcc binutils libc6-dev' >&2 || { echo '{"ok":false,"error":"shared_protection_kmod_headers_unavailable"}'; exit 1; }
     host_root test -d "/lib/modules/$(host uname -r)/build" || { echo '{"ok":false,"error":"shared_protection_kmod_headers_unavailable"}'; exit 1; }
   fi
   host_root sh -c "cd '$BUILD' && SOURCE_DATE_EPOCH=0 KBUILD_BUILD_TIMESTAMP='1970-01-01 00:00:00 +0000' KBUILD_BUILD_USER=xenoid KBUILD_BUILD_HOST=xenoid make KCFLAGS='-fdebug-prefix-map=$BUILD=. -ffile-prefix-map=$BUILD=. -fmacro-prefix-map=$BUILD=.'" >&2 || { echo '{"ok":false,"error":"shared_protection_kmod_build_failed"}'; exit 1; }

@@ -298,8 +298,9 @@ grow_image() {
     { echo 'grown data image geometry verification failed' >&2; exit 60; }
 }
 
+# Parenthesized case labels keep this \$(...) body balanced for bash 3.2 parsers.
 case "\$action" in
-  preserve)
+  (preserve)
     valid_image "\$target" || { echo 'persistent data image missing or invalid' >&2; exit 41; }
     actual="\$(image_uuid "\$target")"
     [ "\$expected_uuid" != - ] && [ "\$actual" = "\$(lower_uuid "\$expected_uuid")" ] ||
@@ -309,13 +310,13 @@ case "\$action" in
       { echo 'persistent data image requires explicit growth' >&2; exit 58; }
     emit "\$target"
     ;;
-  grow)
+  (grow)
     [ '$STORAGE_TRANSACTION' != - ] && [ "\$expected_uuid" != - ] ||
       { echo 'grow transaction and UUID are required' >&2; exit 43; }
     grow_image "\$target" "\$expected_uuid"
     emit "\$target"
     ;;
-  initialize)
+  (initialize)
     [ '$STORAGE_TRANSACTION' != - ] || { echo 'storage transaction required' >&2; exit 43; }
     if valid_image "\$target"; then
       grow_image "\$target" "\$(image_uuid "\$target")"
@@ -347,7 +348,7 @@ case "\$action" in
     sync -f "\$volume_path"
     emit "\$target"
     ;;
-  migrate)
+  (migrate)
     [ '$STORAGE_TRANSACTION' != - ] || { echo 'storage transaction required' >&2; exit 47; }
     source="\$legacy_volume_path/xenoid-data.img"
     valid_image "\$source" || { echo 'legacy data image missing or invalid' >&2; exit 48; }

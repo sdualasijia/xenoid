@@ -225,6 +225,9 @@ _BASE_ENV = (
     *_ANDROID_ENV,
 )
 _DOCKER_ENV = ("DOCKER_HOST", "DOCKER_CONTEXT", "COLIMA_PROFILE")
+_NDK_ENV = ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT")
+_NDK_MINIMUM_MAJOR = 27
+_NDK_REVISION_RE = re.compile(r"^\s*Pkg\.Revision\s*=\s*(\d+)\.", re.MULTILINE)
 _BUILD_OVERRIDE_NAMES = frozenset(
     {
         "CC",
@@ -246,6 +249,29 @@ _BUILD_OVERRIDE_NAMES = frozenset(
         "XENOID_FORCE_REBUILD",
     }
 )
+
+
+def _ndk_supported(ndk: Path) -> bool:
+    """Return False only for an NDK whose recorded release is below the minimum."""
+    try:
+        properties = (ndk / "source.properties").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    match = _NDK_REVISION_RE.search(properties)
+    return match is None or int(match.group(1)) >= _NDK_MINIMUM_MAJOR
+
+
+def requested_environment(supplied: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return the host environment that builds and record observers both hash."""
+    environment = dict(os.environ)
+    environment.update(supplied or {})
+    # Build scripts prefer an explicit NDK over the SDK's pinned one; an
+    # unsupported release must not shadow it.
+    for key in _NDK_ENV:
+        value = environment.get(key)
+        if value and not _ndk_supported(Path(value)):
+            del environment[key]
+    return environment
 
 
 def _out(
@@ -659,8 +685,7 @@ class ArtifactBuilder:
             if key in _BUILD_OVERRIDE_NAMES or key.startswith("ORG_GRADLE_PROJECT_"):
                 if key not in declared_environment:
                     raise ValueError("artifact_environment_override_undeclared")
-        self._requested_environment = dict(os.environ)
-        self._requested_environment.update(supplied)
+        self._requested_environment = requested_environment(supplied)
         self._runner = runner
         self.max_workers = min(4, max(1, int(max_workers)))
         default_slots = max(1, (os.cpu_count() or 1) - 2)
